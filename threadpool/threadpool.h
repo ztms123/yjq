@@ -12,7 +12,7 @@ class threadpool
 {
 public:
     /*thread_number是线程池中线程的数量，max_requests是请求队列中最多允许的、等待处理的请求的数量*/
-    threadpool(connection_pool *connPool, int thread_number = 8, int max_request = 10000);
+    threadpool(int thread_number = 8, int max_request = 10000);
     ~threadpool();
     bool append(T *request);
 
@@ -29,10 +29,10 @@ private:
     locker m_queuelocker;       //保护请求队列的互斥锁
     sem m_queuestat;            //是否有任务需要处理
     bool m_stop;                //是否结束线程
-    connection_pool *m_connPool;  //数据库
+    // connection_pool *m_connPool;  //数据库
 };
 template <typename T>
-threadpool<T>::threadpool( connection_pool *connPool, int thread_number, int max_requests) : m_thread_number(thread_number), m_max_requests(max_requests), m_stop(false), m_threads(NULL),m_connPool(connPool)
+threadpool<T>::threadpool(int thread_number, int max_requests) : m_thread_number(thread_number), m_max_requests(max_requests), m_stop(false), m_threads(NULL)
 {
     if (thread_number <= 0 || max_requests <= 0)
         throw std::exception();

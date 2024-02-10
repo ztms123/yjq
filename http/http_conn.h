@@ -20,7 +20,6 @@
 #include <sys/wait.h>
 #include <sys/uio.h>
 #include "../lock/locker.h"
-#include "../CGImysql/sql_connection_pool.h"
 class http_conn
 {
 public:
@@ -77,7 +76,6 @@ public:
     {
         return &m_address;
     }
-    void initmysql_result(connection_pool *connPool);
 
 private:
     void init();
@@ -102,7 +100,6 @@ private:
 public:
     static int m_epollfd;
     static int m_user_count;
-    MYSQL *mysql;
 
 private:
     int m_sockfd;
