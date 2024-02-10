@@ -6,9 +6,12 @@ SET(TARGET_NAME "my_web.exe")
 
 # find_package (Seastar REQUIRED)
 
-aux_source_directory(./src CPP_SRC)
+aux_source_directory(./http HTTP)
+aux_source_directory(./locker LOCKER)
+aux_source_directory(./threadpool THREADPOOL)
+aux_source_directory(. MAIN)
 
-add_executable (${TARGET_NAME} ${CPP_SRC} )
+add_executable (${TARGET_NAME} ${CPP_SRC} ${LOCKER} ${THREADPOOL} ${MAIN})
 
 # target_link_libraries (${TARGET_NAME}
 #   PRIVATE Seastar::seastar)
