@@ -22,9 +22,6 @@
 #define SYNLOG  //同步写日志
 //#define ASYNLOG //异步写日志
 
-//#define listenfdET //边缘触发非阻塞
-#define listenfdLT //水平触发阻塞
-
 //这三个函数在http_conn.cpp中定义，改变链接属性
 extern int addfd(int epollfd, int fd, bool one_shot);
 extern int remove(int epollfd, int fd);
@@ -105,7 +102,6 @@ int main(int argc, char *argv[])
     bool stop_server = false;
 
     bool timeout = false;
-    alarm(TIMESLOT);
 
     while (!stop_server)
     {
@@ -135,7 +131,7 @@ int main(int argc, char *argv[])
                     continue;
                 }
                 users[connfd].init(connfd, client_address);
-
+                printf("listenfd init \n");
 #endif
 
             }
@@ -143,16 +139,20 @@ int main(int argc, char *argv[])
             //处理客户连接上接收到的数据
             else if (events[i].events & EPOLLIN)
             {
+                printf("EPOLLIN init \n");
                 if (users[sockfd].read_once())
                 {
+                    printf("read_once init \n");
                     //若监测到读事件，将该事件放入请求队列
                     pool->append(users + sockfd);
+                    printf("append init \n");
 
                 }
 
             }
             else if (events[i].events & EPOLLOUT)
             {
+                printf("EPOLLOUT init \n");
                 if (users[sockfd].write())
                 {
 

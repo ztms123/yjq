@@ -20,6 +20,13 @@
 #include <sys/wait.h>
 #include <sys/uio.h>
 #include "../lock/locker.h"
+
+//#define connfdET //边缘触发非阻塞
+#define connfdLT //水平触发阻塞
+
+//#define listenfdET //边缘触发非阻塞
+#define listenfdLT //水平触发阻塞
+
 class http_conn
 {
 public:
