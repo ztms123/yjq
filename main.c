@@ -11,8 +11,12 @@
 
 #include "./lock/locker.h"
 #include "./threadpool/threadpool.h"
-// #include "./timer/lst_timer.h"
+#include "./timer/lst_time.h"
 #include "./http/http_conn.h"
+
+
+
+
 // #include "./log/log.h"
 
 #define MAX_FD 65536           //最大文件描述符
@@ -29,8 +33,46 @@ extern int setnonblocking(int fd);
 
 //设置定时器相关参数
 static int pipefd[2];
-// static sort_timer_lst timer_lst;
+static sort_timer_lst timer_lst;
 static int epollfd = 0;
+
+//信号处理函数
+void sig_handler(int sig)
+{
+    //为保证函数的可重入性，保留原来的errno
+    int save_errno = errno;
+    int msg = sig;
+    send(pipefd[1], (char *)&msg, 1, 0);
+    errno = save_errno;
+}
+
+//设置信号函数
+void addsig(int sig, void(handler)(int), bool restart = true)
+{
+    struct sigaction sa;
+    memset(&sa, '\0', sizeof(sa));
+    sa.sa_handler = handler;
+    if (restart)
+        sa.sa_flags |= SA_RESTART;
+    sigfillset(&sa.sa_mask);
+    assert(sigaction(sig, &sa, NULL) != -1);
+}
+
+//定时处理任务，重新定时以不断触发SIGALRM信号
+void timer_handler()
+{
+    timer_lst.tick();
+    alarm(TIMESLOT);
+}
+
+//定时器回调函数，删除非活动连接在socket上的注册事件，并关闭
+void cb_func(client_data *user_data)
+{
+    epoll_ctl(epollfd, EPOLL_CTL_DEL, user_data->sockfd, 0);
+    assert(user_data);
+    close(user_data->sockfd);
+    http_conn::m_user_count--;
+}
 
 void show_error(int connfd, const char *info)
 {
@@ -67,10 +109,6 @@ int main(int argc, char *argv[])
     int listenfd = socket(PF_INET, SOCK_STREAM, 0);
     assert(listenfd >= 0);
 
-    //struct linger tmp={1,0};
-    //SO_LINGER若有数据待发送，延迟关闭
-    //setsockopt(listenfd,SOL_SOCKET,SO_LINGER,&tmp,sizeof(tmp));
-
     int ret = 0;
     struct sockaddr_in address;
     bzero(&address, sizeof(address));
@@ -99,9 +137,14 @@ int main(int argc, char *argv[])
     setnonblocking(pipefd[1]);
     addfd(epollfd, pipefd[0], false);
 
+    addsig(SIGALRM, sig_handler, false);
+    addsig(SIGTERM, sig_handler, false);
     bool stop_server = false;
 
+    client_data *users_timer = new client_data[MAX_FD];
+
     bool timeout = false;
+    alarm(TIMESLOT);
 
     while (!stop_server)
     {
@@ -131,14 +174,59 @@ int main(int argc, char *argv[])
                     continue;
                 }
                 users[connfd].init(connfd, client_address);
-                printf("listenfd init \n");
+
+                users_timer[connfd].address = client_address;
+                users_timer[connfd].sockfd = connfd;
+                util_timer *time = new util_timer;
+                time->user_data = &users_timer[connfd];
+                time->cb_func = cb_func;
+                time_t cur = 9;
+                time->expire = cur + 3 * TIMESLOT;
+                users_timer[connfd].timer = time;
+                timer_lst.add(time);
+
 #endif
 
+            }
+
+            else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR))
+            {
+                util_timer *time = users_timer[sockfd].timer;
+                time->cb_func(&users_timer[sockfd]);
+                if (time)
+                {
+                    timer_lst.del(time);
+                }
+            }
+
+            else if (events[i].events & EPOLLIN && sockfd == pipefd[0])
+            {
+                char signals[1024];
+                ret = recv(pipefd[0], signals, sizeof(signals), 0);
+                if (ret <= 0) continue;
+                for (int i = 0; i < ret; i++)
+                {
+                    switch (signals[i])
+                    {
+                    case SIGTERM:
+                        stop_server = true;
+                        break;
+                    
+                    case SIGALRM:
+                        timeout = true;
+                        break;
+                    
+                    default:
+                        break;
+                    }
+
+                }
             }
 
             //处理客户连接上接收到的数据
             else if (events[i].events & EPOLLIN)
             {
+                util_timer *time = users_timer[sockfd].timer;
                 printf("EPOLLIN init \n");
                 if (users[sockfd].read_once())
                 {
@@ -146,18 +234,50 @@ int main(int argc, char *argv[])
                     //若监测到读事件，将该事件放入请求队列
                     pool->append(users + sockfd);
                     printf("append init \n");
-
+                    if (time)
+                    {
+                        time_t cur = 9;
+                        time->expire = cur + 3 * TIMESLOT;
+                        timer_lst.modify(time);
+                    }
+                }
+                else 
+                {
+                    time->cb_func(&users_timer[sockfd]);
+                    if (time)
+                    {
+                        timer_lst.del(time);
+                    }
                 }
 
             }
             else if (events[i].events & EPOLLOUT)
             {
+                util_timer *time = users_timer[sockfd].timer;
                 printf("EPOLLOUT init \n");
                 if (users[sockfd].write())
                 {
-
+                    if (time)
+                    {
+                        time_t cur = 9;
+                        time->expire = cur + 3 * TIMESLOT;
+                        timer_lst.modify(time);
+                    }
+                }
+                else 
+                {
+                    time->cb_func(&users_timer[sockfd]);
+                    if (time)
+                    {
+                        timer_lst.del(time);
+                    }
                 }
             }
+        }
+        if (timeout)
+        {
+            timer_handler();
+            timeout = false;
         }
     }
     close(epollfd);
@@ -165,6 +285,7 @@ int main(int argc, char *argv[])
     close(pipefd[1]);
     close(pipefd[0]);
     delete[] users;
+    delete[] users_timer;
     delete pool;
     return 0;
 }
